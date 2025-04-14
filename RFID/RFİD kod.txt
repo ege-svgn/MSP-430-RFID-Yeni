@@ -1,0 +1,118 @@
+#include "main.h"
+#include <string.h>
+#include "rc522.h"
+
+unsigned char Buf[MAX_LEN];
+unsigned char Card1[5] = {161, 235, 32, 29, 119};
+unsigned char Card2[5] = {249, 217, 95, 20, 107};
+unsigned char Status;
+
+/*****************************************************************************************************************************/
+void Clock_Init(void)                                                           // İşlemci saatini ayarlama
+{
+    if (CALBC1_16MHZ == 0xFF)                                                   // Önlem!
+    {
+        while(1);                                                               // OSC arızası
+    }
+    DCOCTL = 0;
+    BCSCTL1 = CALBC1_16MHZ;
+    DCOCTL = CALDCO_16MHZ;
+}
+
+/*****************************************************************************************************************************/
+void GPIO_Init(void)
+{
+    P1DIR = BIT0;
+    P2OUT = BIT2 + BIT4;
+    P2DIR = BIT2 + BIT4;
+}
+
+/*****************************************************************************************************************************/
+void SPI_Init(void)
+{
+    P1SEL |= BIT5 + BIT6 + BIT7;                                                //
+    P1SEL2 |= BIT5 + BIT6 + BIT7;                                               //
+
+    UCB0CTL1 |= UCSWRST + UCSSEL_2;                                             // SMCLK
+    UCB0CTL0 |= UCCKPL + UCMSB + UCMST + UCSYNC;                                //
+    UCB0BR0 = 16;                                                               // 1MHz
+    UCB0BR1 = 0;                                                                //
+    UCB0CTL1 &= ~UCSWRST;                                                       // **Initialize USCI state machine**
+}
+
+/*****************************************************************************************************************************/
+void UART_Init(void)
+{
+    P1SEL |= BIT1 + BIT2 ;                                                      // P1.1 = RXD, P1.2=TXD
+    P1SEL2 |= BIT1 + BIT2;                                                      //
+    UCA0CTL1 |= UCSWRST;                                                        //
+    UCA0CTL1 |= UCSSEL_2;                                                       // SMCLK
+    UCA0BR0 = 138;                                                              // 1MHz 115200
+    UCA0BR1 = 0;                                                                // 1MHz 115200
+    UCA0MCTL = UCBRS2 + UCBRS1 + UCBRS0;                                        // Modulation UCBRSx = 7
+    UCA0CTL1 &= ~UCSWRST;                                                       // **Initialize USCI state machine**
+}
+
+/*****************************************************************************************************************************/
+void SendMsg(unsigned char *MsgPtr)
+{
+    while (*MsgPtr != NULL)
+    {
+        while (!(IFG2 & UCA0TXIFG));
+        UCA0TXBUF = *MsgPtr++;
+    }
+}
+
+/*****************************************************************************************************************************/
+void DelayMs(unsigned int ms)
+{
+    while (ms > 0)                                                              //
+    {
+        __delay_cycles(7930);                                                   // 1ms
+        ms--;                                                                   //
+    }
+}
+
+/*****************************************************************************************************************************/
+void main(void)
+{
+    WDTCTL = WDTPW | WDTHOLD;
+    Clock_Init();
+    GPIO_Init();
+    UART_Init();
+    SPI_Init();
+    RC522_Init();
+    SendMsg(PROMPT);
+    while (1)
+    {
+        Status = RC522_Request(PICC_REQIDL, Buf);
+        if (Status != MI_OK)
+        {
+            LED_GREEN_OFF;
+            continue;
+        }
+        Status = RC522_Anticoll(Buf);
+        if (Status != MI_OK)
+        {
+            LED_GREEN_OFF;
+            continue;
+        }
+        LED_GREEN_ON;                                                           // Kart varlığı algılandı
+        if (memcmp(Buf, Card1, 5) == 0)
+        {
+            SendMsg("Ege Sevgen, 210208055\0");
+        }
+        else if (memcmp(Buf, Card2, 5) == 0)
+        {
+            SendMsg("Ege Sevgen, 210208055\0");
+        }
+        else
+        {
+            SendMsg("Bilinmeyen kişi!\0");
+        }
+        RC422_Halt();                                                           //
+        SendMsg(PROMPT);                                                        // Bilgi mesajını yaz
+        DelayMs(1000);                                                          // LED yanma süresi
+        LED_GREEN_OFF;                                                          // LED söndür
+    }
+}
